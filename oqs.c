@@ -7,17 +7,6 @@
 
 /* ---------- Utilities ---------- */
 
-static inline void secure_bzero(void *p, size_t n) {
-#if defined(__STDC_LIB_EXT1__)
-    memset_s(p, n, 0, n);
-#else
-    volatile unsigned char *vp = (volatile unsigned char *)p;
-    while (n--) {
-        *vp++ = 0;
-    }
-#endif
-}
-
 static void register_algorithm_constants(zend_class_entry *ce,
     size_t (*count_cb)(void),
     const char *(*identifier_cb)(size_t))
@@ -106,8 +95,8 @@ PHP_METHOD(KEM, keypair)
     unsigned char *sk = (unsigned char*)emalloc(kem->length_secret_key);
 
     if (OQS_KEM_keypair(kem, pk, sk) != OQS_SUCCESS) {
-        secure_bzero(pk, kem->length_public_key);
-        secure_bzero(sk, kem->length_secret_key);
+        OQS_MEM_cleanse(pk, kem->length_public_key);
+        OQS_MEM_cleanse(sk, kem->length_secret_key);
         efree(pk); efree(sk);
         OQS_KEM_free(kem);
         throw_failure("Keypair generation failed");
@@ -118,8 +107,8 @@ PHP_METHOD(KEM, keypair)
     add_next_index_stringl(return_value, (char*)pk, kem->length_public_key);
     add_next_index_stringl(return_value, (char*)sk, kem->length_secret_key);
 
-    secure_bzero(pk, kem->length_public_key);
-    secure_bzero(sk, kem->length_secret_key);
+    OQS_MEM_cleanse(pk, kem->length_public_key);
+    OQS_MEM_cleanse(sk, kem->length_secret_key);
     efree(pk); efree(sk);
     OQS_KEM_free(kem);
 }
@@ -149,8 +138,8 @@ PHP_METHOD(KEM, encapsulate)
     unsigned char *ss = (unsigned char*)emalloc(kem->length_shared_secret);
 
     if (OQS_KEM_encaps(kem, ct, ss, (const unsigned char*)public_key) != OQS_SUCCESS) {
-        secure_bzero(ct, kem->length_ciphertext);
-        secure_bzero(ss, kem->length_shared_secret);
+        OQS_MEM_cleanse(ct, kem->length_ciphertext);
+        OQS_MEM_cleanse(ss, kem->length_shared_secret);
         efree(ct); efree(ss);
         OQS_KEM_free(kem);
         throw_failure("Encapsulation failed");
@@ -161,8 +150,8 @@ PHP_METHOD(KEM, encapsulate)
     add_next_index_stringl(return_value, (char*)ct, kem->length_ciphertext);
     add_next_index_stringl(return_value, (char*)ss, kem->length_shared_secret);
 
-    secure_bzero(ct, kem->length_ciphertext);
-    secure_bzero(ss, kem->length_shared_secret);
+    OQS_MEM_cleanse(ct, kem->length_ciphertext);
+    OQS_MEM_cleanse(ss, kem->length_shared_secret);
     efree(ct); efree(ss);
     OQS_KEM_free(kem);
 }
@@ -194,7 +183,7 @@ PHP_METHOD(KEM, decapsulate)
 
     if (OQS_KEM_decaps(kem, ss,
         (const unsigned char*)ciphertext, (const unsigned char*)secret_key) != OQS_SUCCESS) {
-        secure_bzero(ss, kem->length_shared_secret);
+        OQS_MEM_cleanse(ss, kem->length_shared_secret);
         efree(ss);
         OQS_KEM_free(kem);
         throw_failure("Decapsulation failed");
@@ -203,7 +192,7 @@ PHP_METHOD(KEM, decapsulate)
 
     RETVAL_STRINGL((char*)ss, kem->length_shared_secret);
 
-    secure_bzero(ss, kem->length_shared_secret);
+    OQS_MEM_cleanse(ss, kem->length_shared_secret);
     efree(ss);
     OQS_KEM_free(kem);
 }
@@ -238,8 +227,8 @@ PHP_METHOD(Signature, keypair)
     unsigned char *secret_key = (unsigned char*)emalloc(sig->length_secret_key);
 
     if (OQS_SIG_keypair(sig, public_key, secret_key) != OQS_SUCCESS) {
-        secure_bzero(public_key, sig->length_public_key);
-        secure_bzero(secret_key, sig->length_secret_key);
+        OQS_MEM_cleanse(public_key, sig->length_public_key);
+        OQS_MEM_cleanse(secret_key, sig->length_secret_key);
         efree(public_key); efree(secret_key);
         OQS_SIG_free(sig);
         throw_failure("Keypair generation failed");
@@ -250,8 +239,8 @@ PHP_METHOD(Signature, keypair)
     add_next_index_stringl(return_value, (char*)public_key, sig->length_public_key);
     add_next_index_stringl(return_value, (char*)secret_key, sig->length_secret_key);
 
-    secure_bzero(public_key, sig->length_public_key);
-    secure_bzero(secret_key, sig->length_secret_key);
+    OQS_MEM_cleanse(public_key, sig->length_public_key);
+    OQS_MEM_cleanse(secret_key, sig->length_secret_key);
     efree(public_key); efree(secret_key);
     OQS_SIG_free(sig);
 }
@@ -286,7 +275,7 @@ PHP_METHOD(Signature, sign)
     if (OQS_SIG_sign(sig, signature, &signature_len,
             (const unsigned char*)message, message_len,
             (const unsigned char*)secret_key) != OQS_SUCCESS) {
-        secure_bzero(signature, allocated_len);
+        OQS_MEM_cleanse(signature, allocated_len);
         efree(signature);
         OQS_SIG_free(sig);
         throw_failure("Signing failed");
@@ -295,7 +284,7 @@ PHP_METHOD(Signature, sign)
 
     RETVAL_STRINGL((char*)signature, signature_len);
 
-    secure_bzero(signature, allocated_len);
+    OQS_MEM_cleanse(signature, allocated_len);
     efree(signature);
     OQS_SIG_free(sig);
 }
@@ -352,42 +341,42 @@ PHP_METHOD(Signature, algorithms)
 
 /* ---------- Arginfo ---------- */
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_KEM_keypair, 0, 0, 1)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_KEM_keypair, 0, 1, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, algorithm, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_KEM_encapsulate, 0, 0, 2)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_KEM_encapsulate, 0, 2, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, algorithm, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, publicKey, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_KEM_decapsulate, 0, 0, 3)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_KEM_decapsulate, 0, 3, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, algorithm, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, ciphertext, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, secretKey, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_KEM_algorithms, 0, 0, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_KEM_algorithms, 0, 0, IS_ARRAY, 0)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_Signature_keypair, 0, 0, 1)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_Signature_keypair, 0, 1, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, algorithm, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_Signature_sign, 0, 0, 3)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_Signature_sign, 0, 3, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, algorithm, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, message, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, secretKey, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_Signature_verify, 0, 0, 4)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_Signature_verify, 0, 4, _IS_BOOL, 0)
     ZEND_ARG_TYPE_INFO(0, algorithm, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, message, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, signature, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, publicKey, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_Signature_algorithms, 0, 0, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_Signature_algorithms, 0, 0, IS_ARRAY, 0)
 ZEND_END_ARG_INFO()
 
 /* ---------- Methods table ---------- */
