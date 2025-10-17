@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 - Updated PHP 8.5 support
 - 
 
+## [0.3.2] - 2025-10-17
+- Version bump
+
 ## [0.3.0] - 2025-10-17
 - Added PIE / Packagist support (composer.json)
 - Added liboqs installation instructions
