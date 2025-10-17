@@ -50,7 +50,7 @@ Global namespace constants (e.g. `OQS\VERSION_TEXT`) mirror liboqs build info.
 use OQS\KEM;
 
 // Pick an algorithm supported by your liboqs build:
-$alg = defined('OQS\KEM::ALG_ML_KEM_768') ? OQS\KEM::ALG_ML_KEM_768 : OQS\KEM::ALG_KYBER768;
+$alg = defined('OQS\\KEM::ALG_ML_KEM_768') ? OQS\KEM::ALG_ML_KEM_768 : OQS\KEM::ALG_KYBER768;
 
 [$pk, $sk] = KEM::keypair($alg);
 [$ct, $ss1] = KEM::encapsulate($alg, $pk);
@@ -61,6 +61,32 @@ assert(hash_equals($ss1, $ss2));
 // If you need text-safe values:
 echo base64_encode($ct), "\n", base64_encode($ss1), "\n";
 ```
+
+---
+
+## Installing liboqs
+
+Before building this PHP extension, you need the **liboqs** C library and headers installed on your system.  
+You can either build it from source or install it via a package manager if available.
+
+### Build from source (recommended)
+```bash
+git clone https://github.com/open-quantum-safe/liboqs.git
+cd liboqs
+mkdir build && cd build
+cmake -DCMAKE_INSTALL_PREFIX=/usr/local -DOQS_BUILD_ONLY_LIB=ON ..
+make -j$(nproc)
+sudo make install
+```
+This installs `liboqs.so` to `/usr/local/lib` and headers to `/usr/local/include/oqs`.
+
+### Verify installation
+```bash
+pkg-config --modversion liboqs
+# should report 0.14.0 or newer
+```
+
+Then proceed with the build steps below.
 
 ---
 
@@ -92,8 +118,6 @@ echo "extension=oqs.so" | sudo tee /etc/php/<ver>/mods-available/oqs.ini
 sudo phpenmod oqs
 php -m | grep oqs
 ```
-
-
 
 ### Using an explicit liboqs prefix
 
