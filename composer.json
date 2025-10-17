@@ -1,0 +1,28 @@
+{
+  "name": "secudoc/php-liboqs",
+  "description": "PHP extension wrapping liboqs (post-quantum cryptography).",
+  "type": "php-ext",
+  "license": "MIT",
+  "homepage": "https://github.com/secudoc/php-liboqs",
+  "support": {
+    "issues": "https://github.com/secudoc/php-liboqs/issues",
+    "source": "https://github.com/secudoc/php-liboqs"
+  },
+  "require": {
+    "php": "^8.3 || ^8.4 || ^8.5"
+  },
+  "replace": {
+    "ext-oqs": "*"
+  },
+  "php-ext": {
+    "extension-name": "ext-oqs",
+    "support-zts": true,
+    "configure-options": [
+      {
+        "name": "with-oqs",
+        "needs-value": false,
+        "description": "Build against liboqs (use --with-oqs=/path if it is not in a default location)."
+      }
+    ]
+  }
+}
