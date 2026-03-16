@@ -530,6 +530,8 @@ PHP_MINFO_FUNCTION(oqs)
     php_info_print_table_row(2, "liboqs", OQS_VERSION_TEXT);
 #endif
     php_info_print_table_row(2, "extension version", OQS_EXTENSION_VERSION);
+    php_info_print_table_row(2, "Bug reports", "https://github.com/secudoc/php-liboqs/issues");
+    php_info_print_table_row(2, "Maintainer", "wim@secudoc.nl");
     php_info_print_table_end();
 }
 
