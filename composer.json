@@ -21,7 +21,7 @@
       {
         "name": "with-oqs",
         "needs-value": false,
-        "description": "Build against liboqs (use --with-oqs=/path if it is not in a default location)."
+        "description": "Build against liboqs; omit the value to use pkg-config discovery, or pass --with-oqs=/path for an explicit prefix."
       }
     ]
   }

@@ -18,8 +18,8 @@ Once PHP natively supports PQC, this wrapper will likely be deprecated.
 `OQS\KEM` exposes post-quantum key encapsulation:
 
 - `OQS\KEM::algorithms(): string[]` — list enabled KEM identifiers.
-- `OQS\KEM::keypair(string $algorithm): array{0: string $publicKey, 1: string $secretKey}`
-- `OQS\KEM::encapsulate(string $algorithm, string $publicKey): array{0: string $ciphertext, 1: string $sharedSecret}`
+- `OQS\KEM::keypair(string $algorithm): array{0: string $publicKey, 1: string $secretKey, publicKey: string, secretKey: string}`
+- `OQS\KEM::encapsulate(string $algorithm, string $publicKey): array{0: string $ciphertext, 1: string $sharedSecret, ciphertext: string, sharedSecret: string}`
 - `OQS\KEM::decapsulate(string $algorithm, string $ciphertext, string $secretKey): string`
 
 All algorithm identifiers surfaced by liboqs are also available as class constants, e.g.
@@ -28,12 +28,15 @@ All algorithm identifiers surfaced by liboqs are also available as class constan
 > **Binary outputs**: All keys, ciphertexts, and shared secrets are raw binary strings. Base64-encode
 > if you need printable or JSON-safe values.
 
+> **Secret handling**: temporary native buffers are wiped with `OQS_MEM_cleanse`, but returned PHP strings remain managed by the Zend engine and are not guaranteed to be securely erased later. Treat secret keys and shared secrets as sensitive application data.
+
+
 ### Signatures
 
 `OQS\Signature` wraps stateless PQ signatures:
 
 - `OQS\Signature::algorithms(): string[]`
-- `OQS\Signature::keypair(string $algorithm): array{0: string $publicKey, 1: string $secretKey}`
+- `OQS\Signature::keypair(string $algorithm): array{0: string $publicKey, 1: string $secretKey, publicKey: string, secretKey: string}`
 - `OQS\Signature::sign(string $algorithm, string $message, string $secretKey): string`
 - `OQS\Signature::verify(string $algorithm, string $message, string $signature, string $publicKey): bool`
 
@@ -106,12 +109,19 @@ grep -E 'OQS_VERSION_(TEXT|MAJOR|MINOR|PATCH)' /usr/local/include/oqs/oqsconfig.
 ---
 
 ## Build & install
+### Using `pie` (recommended)
 
-### Using `pkg-config` (recommended)
+Retrieve the `pie.phar` from [https://github.com/php/pie](https://github.com/php/pie) and install the extension as follows:
+```bash
+sudo pie install secudoc/php-liboqs
+```
+Make sure you have liboqs already installed.
+
+### Build it from scratch using `pkg-config` 
 
 ```bash
 /php/bin/phpize
-./configure --with-php-config=/php/bin/php-config
+./configure --with-php-config=/php/bin/php-config --with-oqs
 make -j$(nproc)
 sudo make install
 echo "extension=oqs.so" | sudo tee /etc/php/<ver>/mods-available/oqs.ini
@@ -124,8 +134,8 @@ php -m | grep oqs
 If liboqs isn’t in pkg-config, pass the prefix that contains `include/oqs` and `lib/`:
 
 ```bash
-/php/php-8.4/bin/phpize
-./configure --with-php-config=/php/php-8.4/bin/php-config --with-oqs=/usr/local
+/php/php-8.5/bin/phpize
+./configure --with-php-config=/php/php-8.5/bin/php-config --with-oqs=/usr/local
 make -j$(nproc) && sudo make install
 ```
 

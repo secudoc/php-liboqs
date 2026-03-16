@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.3.3] - 2026-03-16
+- Added PIE installation instructions
+- Updated PHP 8.5 support
+- 
+
 ## [0.3.0] - 2025-10-17
 - Added PIE / Packagist support (composer.json)
 - Added liboqs installation instructions

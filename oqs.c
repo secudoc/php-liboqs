@@ -7,6 +7,10 @@
 
 /* ---------- Utilities ---------- */
 
+static zend_class_entry *oqs_kem_ce;
+static zend_class_entry *oqs_signature_ce;
+static zend_class_entry *oqs_exception_ce;
+
 static void register_algorithm_constants(zend_class_entry *ce,
     size_t (*count_cb)(void),
     const char *(*identifier_cb)(size_t))
@@ -22,16 +26,19 @@ static void register_algorithm_constants(zend_class_entry *ce,
             continue;
         }
 
-        char constant_name[128];
+        size_t identifier_len = strlen(identifier);
+        size_t constant_len = sizeof("ALG_") - 1 + identifier_len;
+        char *constant_name = emalloc(constant_len + 1);
         size_t j = 0;
         const char *prefix = "ALG_";
-        while (*prefix && j < sizeof(constant_name) - 1) {
+
+        while (*prefix) {
             constant_name[j++] = *prefix++;
         }
 
-        for (const char *p = identifier; *p && j < sizeof(constant_name) - 1; ++p) {
+        for (const char *p = identifier; *p; ++p) {
             if (isalnum((unsigned char)*p)) {
-                constant_name[j++] = (char)toupper((unsigned char)*p);
+                constant_name[j++] = (char) toupper((unsigned char) *p);
             } else {
                 constant_name[j++] = '_';
             }
@@ -39,7 +46,8 @@ static void register_algorithm_constants(zend_class_entry *ce,
 
         constant_name[j] = '\0';
 
-        zend_declare_class_constant_stringl(ce, constant_name, j, identifier, strlen(identifier));
+        zend_declare_class_constant_stringl(ce, constant_name, j, identifier, identifier_len);
+        efree(constant_name);
     }
 }
 
@@ -63,17 +71,45 @@ static void list_algorithms(zval *return_value,
     }
 }
 
-static zend_class_entry *oqs_kem_ce;
-static zend_class_entry *oqs_signature_ce;
-
-static zend_always_inline void throw_unsupported_algorithm(void)
+static zend_always_inline void throw_unsupported_algorithm(const char *type, const char *algorithm)
 {
-    zend_throw_exception(zend_ce_exception, "Algorithm not supported by liboqs", 0);
+    zend_throw_exception_ex(
+        oqs_exception_ce,
+        0,
+        "%s algorithm is not supported by liboqs: %s",
+        type,
+        algorithm ? algorithm : "(unknown)"
+    );
 }
 
 static zend_always_inline void throw_failure(const char *message)
 {
-    zend_throw_exception(zend_ce_exception, message, 0);
+    zend_throw_exception(oqs_exception_ce, message, 0);
+}
+
+static zend_always_inline void throw_length_mismatch(const char *label, const char *algorithm, size_t expected, size_t actual)
+{
+    zend_throw_exception_ex(
+        oqs_exception_ce,
+        0,
+        "Invalid %s length for algorithm %s: expected %zu bytes, got %zu bytes",
+        label,
+        algorithm ? algorithm : "(unknown)",
+        expected,
+        actual
+    );
+}
+
+static zend_always_inline void add_binary_pair(zval *return_value,
+    const char *first_key, const unsigned char *first_value, size_t first_len,
+    const char *second_key, const unsigned char *second_value, size_t second_len)
+{
+    array_init_size(return_value, 4);
+
+    add_next_index_stringl(return_value, (const char *) first_value, first_len);
+    add_next_index_stringl(return_value, (const char *) second_value, second_len);
+    add_assoc_stringl(return_value, first_key, (const char *) first_value, first_len);
+    add_assoc_stringl(return_value, second_key, (const char *) second_value, second_len);
 }
 
 /* ---------- OQS\\KEM class ---------- */
@@ -87,12 +123,12 @@ PHP_METHOD(KEM, keypair)
 
     OQS_KEM *kem = OQS_KEM_new(alg);
     if (!kem) {
-        throw_unsupported_algorithm();
+        throw_unsupported_algorithm("KEM", alg);
         RETURN_THROWS();
     }
 
-    unsigned char *pk = (unsigned char*)emalloc(kem->length_public_key);
-    unsigned char *sk = (unsigned char*)emalloc(kem->length_secret_key);
+    unsigned char *pk = (unsigned char *) emalloc(kem->length_public_key);
+    unsigned char *sk = (unsigned char *) emalloc(kem->length_secret_key);
 
     if (OQS_KEM_keypair(kem, pk, sk) != OQS_SUCCESS) {
         OQS_MEM_cleanse(pk, kem->length_public_key);
@@ -103,9 +139,9 @@ PHP_METHOD(KEM, keypair)
         RETURN_THROWS();
     }
 
-    array_init_size(return_value, 2);
-    add_next_index_stringl(return_value, (char*)pk, kem->length_public_key);
-    add_next_index_stringl(return_value, (char*)sk, kem->length_secret_key);
+    add_binary_pair(return_value,
+        "publicKey", pk, kem->length_public_key,
+        "secretKey", sk, kem->length_secret_key);
 
     OQS_MEM_cleanse(pk, kem->length_public_key);
     OQS_MEM_cleanse(sk, kem->length_secret_key);
@@ -124,20 +160,20 @@ PHP_METHOD(KEM, encapsulate)
 
     OQS_KEM *kem = OQS_KEM_new(alg);
     if (!kem) {
-        throw_unsupported_algorithm();
+        throw_unsupported_algorithm("KEM", alg);
         RETURN_THROWS();
     }
 
     if (pk_len != kem->length_public_key) {
         OQS_KEM_free(kem);
-        throw_failure("Invalid public key length for selected algorithm");
+        throw_length_mismatch("public key", alg, kem->length_public_key, pk_len);
         RETURN_THROWS();
     }
 
-    unsigned char *ct = (unsigned char*)emalloc(kem->length_ciphertext);
-    unsigned char *ss = (unsigned char*)emalloc(kem->length_shared_secret);
+    unsigned char *ct = (unsigned char *) emalloc(kem->length_ciphertext);
+    unsigned char *ss = (unsigned char *) emalloc(kem->length_shared_secret);
 
-    if (OQS_KEM_encaps(kem, ct, ss, (const unsigned char*)public_key) != OQS_SUCCESS) {
+    if (OQS_KEM_encaps(kem, ct, ss, (const unsigned char *) public_key) != OQS_SUCCESS) {
         OQS_MEM_cleanse(ct, kem->length_ciphertext);
         OQS_MEM_cleanse(ss, kem->length_shared_secret);
         efree(ct); efree(ss);
@@ -146,9 +182,9 @@ PHP_METHOD(KEM, encapsulate)
         RETURN_THROWS();
     }
 
-    array_init_size(return_value, 2);
-    add_next_index_stringl(return_value, (char*)ct, kem->length_ciphertext);
-    add_next_index_stringl(return_value, (char*)ss, kem->length_shared_secret);
+    add_binary_pair(return_value,
+        "ciphertext", ct, kem->length_ciphertext,
+        "sharedSecret", ss, kem->length_shared_secret);
 
     OQS_MEM_cleanse(ct, kem->length_ciphertext);
     OQS_MEM_cleanse(ss, kem->length_shared_secret);
@@ -169,20 +205,26 @@ PHP_METHOD(KEM, decapsulate)
 
     OQS_KEM *kem = OQS_KEM_new(alg);
     if (!kem) {
-        throw_unsupported_algorithm();
+        throw_unsupported_algorithm("KEM", alg);
         RETURN_THROWS();
     }
 
-    if (ct_len != kem->length_ciphertext || sk_len != kem->length_secret_key) {
+    if (ct_len != kem->length_ciphertext) {
         OQS_KEM_free(kem);
-        throw_failure("Invalid ciphertext or secret key length for selected algorithm");
+        throw_length_mismatch("ciphertext", alg, kem->length_ciphertext, ct_len);
         RETURN_THROWS();
     }
 
-    unsigned char *ss = (unsigned char*)emalloc(kem->length_shared_secret);
+    if (sk_len != kem->length_secret_key) {
+        OQS_KEM_free(kem);
+        throw_length_mismatch("secret key", alg, kem->length_secret_key, sk_len);
+        RETURN_THROWS();
+    }
+
+    unsigned char *ss = (unsigned char *) emalloc(kem->length_shared_secret);
 
     if (OQS_KEM_decaps(kem, ss,
-        (const unsigned char*)ciphertext, (const unsigned char*)secret_key) != OQS_SUCCESS) {
+        (const unsigned char *) ciphertext, (const unsigned char *) secret_key) != OQS_SUCCESS) {
         OQS_MEM_cleanse(ss, kem->length_shared_secret);
         efree(ss);
         OQS_KEM_free(kem);
@@ -190,7 +232,7 @@ PHP_METHOD(KEM, decapsulate)
         RETURN_THROWS();
     }
 
-    RETVAL_STRINGL((char*)ss, kem->length_shared_secret);
+    RETVAL_STRINGL((const char *) ss, kem->length_shared_secret);
 
     OQS_MEM_cleanse(ss, kem->length_shared_secret);
     efree(ss);
@@ -204,7 +246,7 @@ PHP_METHOD(KEM, algorithms)
     }
 
     list_algorithms(return_value,
-        (size_t (*)(void))OQS_KEM_alg_count,
+        (size_t (*)(void)) OQS_KEM_alg_count,
         OQS_KEM_alg_identifier);
 }
 
@@ -219,29 +261,29 @@ PHP_METHOD(Signature, keypair)
 
     OQS_SIG *sig = OQS_SIG_new(alg);
     if (!sig) {
-        throw_unsupported_algorithm();
+        throw_unsupported_algorithm("Signature", alg);
         RETURN_THROWS();
     }
 
-    unsigned char *public_key = (unsigned char*)emalloc(sig->length_public_key);
-    unsigned char *secret_key = (unsigned char*)emalloc(sig->length_secret_key);
+    unsigned char *pk = (unsigned char *) emalloc(sig->length_public_key);
+    unsigned char *sk = (unsigned char *) emalloc(sig->length_secret_key);
 
-    if (OQS_SIG_keypair(sig, public_key, secret_key) != OQS_SUCCESS) {
-        OQS_MEM_cleanse(public_key, sig->length_public_key);
-        OQS_MEM_cleanse(secret_key, sig->length_secret_key);
-        efree(public_key); efree(secret_key);
+    if (OQS_SIG_keypair(sig, pk, sk) != OQS_SUCCESS) {
+        OQS_MEM_cleanse(pk, sig->length_public_key);
+        OQS_MEM_cleanse(sk, sig->length_secret_key);
+        efree(pk); efree(sk);
         OQS_SIG_free(sig);
-        throw_failure("Keypair generation failed");
+        throw_failure("Signature keypair generation failed");
         RETURN_THROWS();
     }
 
-    array_init_size(return_value, 2);
-    add_next_index_stringl(return_value, (char*)public_key, sig->length_public_key);
-    add_next_index_stringl(return_value, (char*)secret_key, sig->length_secret_key);
+    add_binary_pair(return_value,
+        "publicKey", pk, sig->length_public_key,
+        "secretKey", sk, sig->length_secret_key);
 
-    OQS_MEM_cleanse(public_key, sig->length_public_key);
-    OQS_MEM_cleanse(secret_key, sig->length_secret_key);
-    efree(public_key); efree(secret_key);
+    OQS_MEM_cleanse(pk, sig->length_public_key);
+    OQS_MEM_cleanse(sk, sig->length_secret_key);
+    efree(pk); efree(sk);
     OQS_SIG_free(sig);
 }
 
@@ -258,23 +300,23 @@ PHP_METHOD(Signature, sign)
 
     OQS_SIG *sig = OQS_SIG_new(alg);
     if (!sig) {
-        throw_unsupported_algorithm();
+        throw_unsupported_algorithm("Signature", alg);
         RETURN_THROWS();
     }
 
     if (secret_len != sig->length_secret_key) {
         OQS_SIG_free(sig);
-        throw_failure("Invalid secret key length for selected algorithm");
+        throw_length_mismatch("secret key", alg, sig->length_secret_key, secret_len);
         RETURN_THROWS();
     }
 
     size_t allocated_len = sig->length_signature;
     size_t signature_len = allocated_len;
-    unsigned char *signature = (unsigned char*)emalloc(allocated_len);
+    unsigned char *signature = (unsigned char *) emalloc(allocated_len);
 
     if (OQS_SIG_sign(sig, signature, &signature_len,
-            (const unsigned char*)message, message_len,
-            (const unsigned char*)secret_key) != OQS_SUCCESS) {
+            (const unsigned char *) message, message_len,
+            (const unsigned char *) secret_key) != OQS_SUCCESS) {
         OQS_MEM_cleanse(signature, allocated_len);
         efree(signature);
         OQS_SIG_free(sig);
@@ -282,7 +324,7 @@ PHP_METHOD(Signature, sign)
         RETURN_THROWS();
     }
 
-    RETVAL_STRINGL((char*)signature, signature_len);
+    RETVAL_STRINGL((const char *) signature, signature_len);
 
     OQS_MEM_cleanse(signature, allocated_len);
     efree(signature);
@@ -304,20 +346,33 @@ PHP_METHOD(Signature, verify)
 
     OQS_SIG *sig = OQS_SIG_new(alg);
     if (!sig) {
-        throw_unsupported_algorithm();
+        throw_unsupported_algorithm("Signature", alg);
         RETURN_THROWS();
     }
 
-    if (public_len != sig->length_public_key || signature_len > sig->length_signature) {
+    if (public_len != sig->length_public_key) {
         OQS_SIG_free(sig);
-        throw_failure("Invalid signature or public key length for selected algorithm");
+        throw_length_mismatch("public key", alg, sig->length_public_key, public_len);
+        RETURN_THROWS();
+    }
+
+    if (signature_len > sig->length_signature) {
+        OQS_SIG_free(sig);
+        zend_throw_exception_ex(
+            oqs_exception_ce,
+            0,
+            "Invalid signature length for algorithm %s: maximum %zu bytes, got %zu bytes",
+            alg,
+            sig->length_signature,
+            signature_len
+        );
         RETURN_THROWS();
     }
 
     OQS_STATUS status = OQS_SIG_verify(sig,
-        (const unsigned char*)message, message_len,
-        (const unsigned char*)signature, signature_len,
-        (const unsigned char*)public_key);
+        (const unsigned char *) message, message_len,
+        (const unsigned char *) signature, signature_len,
+        (const unsigned char *) public_key);
 
     OQS_SIG_free(sig);
 
@@ -335,7 +390,7 @@ PHP_METHOD(Signature, algorithms)
     }
 
     list_algorithms(return_value,
-        (size_t (*)(void))OQS_SIG_alg_count,
+        (size_t (*)(void)) OQS_SIG_alg_count,
         OQS_SIG_alg_identifier);
 }
 
@@ -399,6 +454,13 @@ static const zend_function_entry signature_methods[] = {
 
 /* ---------- Module init ---------- */
 
+static void register_exception_class(void)
+{
+    zend_class_entry ce;
+    INIT_NS_CLASS_ENTRY(ce, "OQS", "Exception", NULL);
+    oqs_exception_ce = zend_register_internal_class_ex(&ce, zend_ce_exception);
+}
+
 static void register_kem_class(void)
 {
     zend_class_entry ce;
@@ -406,7 +468,7 @@ static void register_kem_class(void)
     oqs_kem_ce = zend_register_internal_class(&ce);
 
     register_algorithm_constants(oqs_kem_ce,
-        (size_t (*)(void))OQS_KEM_alg_count,
+        (size_t (*)(void)) OQS_KEM_alg_count,
         OQS_KEM_alg_identifier);
 }
 
@@ -417,7 +479,7 @@ static void register_signature_class(void)
     oqs_signature_ce = zend_register_internal_class(&ce);
 
     register_algorithm_constants(oqs_signature_ce,
-        (size_t (*)(void))OQS_SIG_alg_count,
+        (size_t (*)(void)) OQS_SIG_alg_count,
         OQS_SIG_alg_identifier);
 }
 
@@ -432,6 +494,7 @@ PHP_MINIT_FUNCTION(oqs)
     }
 #endif
 
+    register_exception_class();
     register_kem_class();
     register_signature_class();
 
@@ -445,7 +508,7 @@ PHP_MINIT_FUNCTION(oqs)
     REGISTER_NS_STRING_CONSTANT("OQS", "COMMIT", OQS_COMMIT, CONST_CS | CONST_PERSISTENT);
 #endif
 #ifdef OQS_VERSION_NUMBER
-    REGISTER_NS_LONG_CONSTANT("OQS", "VERSION_NUMBER", (zend_long)OQS_VERSION_NUMBER, CONST_CS | CONST_PERSISTENT);
+    REGISTER_NS_LONG_CONSTANT("OQS", "VERSION_NUMBER", (zend_long) OQS_VERSION_NUMBER, CONST_CS | CONST_PERSISTENT);
 #endif
     REGISTER_NS_STRING_CONSTANT("OQS", "EXTENSION_VERSION", OQS_EXTENSION_VERSION, CONST_CS | CONST_PERSISTENT);
 

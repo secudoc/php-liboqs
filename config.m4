@@ -1,43 +1,42 @@
 PHP_ARG_WITH([oqs],
-  [for OQS extension support (path to liboqs prefix)],
-  [--with-oqs[=DIR]        Build the OQS extension; DIR is the liboqs prefix])
+  [for OQS extension support (optional path to liboqs prefix)],
+  [AS_HELP_STRING([--with-oqs[=DIR]], [Build the OQS extension; optionally specify the liboqs prefix])],
+  [no],
+  [no])
 
 if test "$PHP_OQS" = "no"; then
-  AC_MSG_ERROR([You must provide --with-oqs=<liboqs prefix>])
-fi
-
-dnl Default to /usr/local if user passed just --with-oqs
-if test "$PHP_OQS" = "yes"; then
-  PHP_OQS="/usr/local"
-fi
-
-OQS_DIR="$PHP_OQS"
-
-dnl ---------- Header presence ----------
-AC_MSG_CHECKING([for liboqs in $OQS_DIR])
-if test -f "$OQS_DIR/include/oqs/oqs.h"; then
-  AC_MSG_RESULT([found headers])
-else
-  AC_MSG_ERROR([oqs.h not found in $OQS_DIR/include/oqs])
-fi
-
-dnl ---------- Version check: prefer pkg-config, fallback to parsing oqsconfig.h ----------
-AC_PATH_TOOL([PKG_CONFIG],[pkg-config],[:])
-
-OQS_VERSION_OK=no
-OQS_VERSION_TXT="unknown"
-
-if test "$PKG_CONFIG" != ":"; then
-  dnl Try pkg-config to check version
-  if $PKG_CONFIG --exists "liboqs >= 0.14.0"; then
-    OQS_VERSION_OK=yes
-    OQS_VERSION_TXT=`$PKG_CONFIG --modversion liboqs 2>/dev/null || echo unknown`
-    AC_MSG_RESULT([using pkg-config: liboqs $OQS_VERSION_TXT >= 0.14.0])
+  AC_PATH_TOOL([PKG_CONFIG], [pkg-config], [:])
+  if test "$PKG_CONFIG" = ":"; then
+    AC_MSG_ERROR([liboqs not found: install pkg-config metadata or pass --with-oqs=/path/to/liboqs])
   fi
-fi
 
-if test "$OQS_VERSION_OK" = "no"; then
-  dnl Fallback: parse oqsconfig.h (defines OQS_VERSION_{MAJOR,MINOR,PATCH,TEXT})
+  if ! $PKG_CONFIG --exists "liboqs >= 0.14.0"; then
+    AC_MSG_ERROR([liboqs 0.14.0 or newer is required])
+  fi
+
+  OQS_VERSION_TXT=`$PKG_CONFIG --modversion liboqs 2>/dev/null || echo unknown`
+  OQS_CFLAGS=`$PKG_CONFIG --cflags liboqs 2>/dev/null`
+  OQS_LIBS=`$PKG_CONFIG --libs liboqs 2>/dev/null`
+
+  AC_MSG_NOTICE([using pkg-config for liboqs $OQS_VERSION_TXT])
+
+  PHP_EVAL_INCLINE([$OQS_CFLAGS])
+  PHP_EVAL_LIBLINE([$OQS_LIBS], [OQS_SHARED_LIBADD])
+else
+  dnl Default to /usr/local if user passed just --with-oqs
+  if test "$PHP_OQS" = "yes"; then
+    PHP_OQS="/usr/local"
+  fi
+
+  OQS_DIR="$PHP_OQS"
+
+  AC_MSG_CHECKING([for liboqs in $OQS_DIR])
+  if test -f "$OQS_DIR/include/oqs/oqs.h"; then
+    AC_MSG_RESULT([found headers])
+  else
+    AC_MSG_ERROR([oqs.h not found in $OQS_DIR/include/oqs])
+  fi
+
   AC_MSG_CHECKING([for liboqs version >= 0.14.0 via oqsconfig.h])
   OQS_CONF="$OQS_DIR/include/oqs/oqsconfig.h"
   if test -f "$OQS_CONF"; then
@@ -50,7 +49,6 @@ if test "$OQS_VERSION_OK" = "no"; then
       AC_MSG_ERROR([could not determine liboqs version from $OQS_CONF])
     fi
 
-    dnl Compare tuple (major,minor,patch) >= (0,14,0)
     OQS_OK=no
     if test "$OQS_VER_MAJ" -gt 0; then
       OQS_OK=yes
@@ -65,18 +63,16 @@ if test "$OQS_VERSION_OK" = "no"; then
     if test "$OQS_OK" = "no"; then
       AC_MSG_ERROR([liboqs 0.14.0 or newer is required (found ${OQS_VER_TXT:-$OQS_VER_MAJ.$OQS_VER_MIN.$OQS_VER_PAT})])
     else
-      OQS_VERSION_OK=yes
       OQS_VERSION_TXT="${OQS_VER_TXT:-$OQS_VER_MAJ.$OQS_VER_MIN.$OQS_VER_PAT}"
       AC_MSG_RESULT([ok ($OQS_VERSION_TXT)])
     fi
   else
     AC_MSG_ERROR([cannot find $OQS_CONF to verify version])
   fi
+
+  PHP_ADD_INCLUDE([$OQS_DIR/include])
+  PHP_ADD_LIBRARY_WITH_PATH([oqs], [$OQS_DIR/lib], [OQS_SHARED_LIBADD])
 fi
 
-dnl ---------- Add include and lib paths from the chosen prefix ----------
-PHP_ADD_INCLUDE($OQS_DIR/include)
-PHP_ADD_LIBRARY_WITH_PATH(oqs, $OQS_DIR/lib, OQS_SHARED_LIBADD)
-
-PHP_NEW_EXTENSION(oqs, oqs.c, $ext_shared)
-PHP_SUBST(OQS_SHARED_LIBADD)
+PHP_NEW_EXTENSION([oqs], [oqs.c], [$ext_shared])
+PHP_SUBST([OQS_SHARED_LIBADD])
