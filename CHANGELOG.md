@@ -1,6 +1,21 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.4.0] - 2026-04-10
+
+### Added
+- **KEM deterministic operations** (wraps `OQS_KEM_keypair_derand` / `OQS_KEM_encaps_derand`):
+    - `KEM::keypairDerand(string $algorithm, string $seed)` — deterministic keypair from seed
+    - `KEM::encapsulateDerand(string $algorithm, string $publicKey, string $seed)` — deterministic encapsulation from seed
+- **Context-aware signatures** (wraps `OQS_SIG_sign_with_ctx_str` / `OQS_SIG_verify_with_ctx_str`):
+    - `Signature::signWithContext(string $algorithm, string $message, string $context, string $secretKey)`
+    - `Signature::verifyWithContext(string $algorithm, string $message, string $signature, string $context, string $publicKey)`
+
+### Why
+- `keypairDerand` enables spec-conformant X-Wing KEM (IETF draft-connolly-cfrg-xwing-kem-10) which derives ML-KEM keys from a 32-byte seed via SHAKE256
+- `encapsulateDerand` enables validation against IETF test vectors with deterministic randomness
+- `signWithContext` / `verifyWithContext` enable context-bound PQC signatures for future sender authentication
+
 ## [0.3.3] - 2026-03-16
 - Added PIE installation instructions
 - Updated PHP 8.5 support

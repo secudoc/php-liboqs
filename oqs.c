@@ -149,6 +149,43 @@ PHP_METHOD(KEM, keypair)
     OQS_KEM_free(kem);
 }
 
+PHP_METHOD(KEM, keypairDerand)
+{
+    char *alg = NULL; size_t alg_len = 0;
+    char *seed = NULL; size_t seed_len = 0;
+
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "ss", &alg, &alg_len, &seed, &seed_len) == FAILURE) {
+        RETURN_THROWS();
+    }
+
+    OQS_KEM *kem = OQS_KEM_new(alg);
+    if (!kem) {
+        throw_unsupported_algorithm("KEM", alg);
+        RETURN_THROWS();
+    }
+
+    unsigned char *pk = (unsigned char *) emalloc(kem->length_public_key);
+    unsigned char *sk = (unsigned char *) emalloc(kem->length_secret_key);
+
+    if (OQS_KEM_keypair_derand(kem, pk, sk, (const unsigned char *) seed) != OQS_SUCCESS) {
+        OQS_MEM_cleanse(pk, kem->length_public_key);
+        OQS_MEM_cleanse(sk, kem->length_secret_key);
+        efree(pk); efree(sk);
+        OQS_KEM_free(kem);
+        throw_failure("Deterministic keypair generation failed");
+        RETURN_THROWS();
+    }
+
+    add_binary_pair(return_value,
+        "publicKey", pk, kem->length_public_key,
+        "secretKey", sk, kem->length_secret_key);
+
+    OQS_MEM_cleanse(pk, kem->length_public_key);
+    OQS_MEM_cleanse(sk, kem->length_secret_key);
+    efree(pk); efree(sk);
+    OQS_KEM_free(kem);
+}
+
 PHP_METHOD(KEM, encapsulate)
 {
     char *alg = NULL; size_t alg_len = 0;
@@ -179,6 +216,52 @@ PHP_METHOD(KEM, encapsulate)
         efree(ct); efree(ss);
         OQS_KEM_free(kem);
         throw_failure("Encapsulation failed");
+        RETURN_THROWS();
+    }
+
+    add_binary_pair(return_value,
+        "ciphertext", ct, kem->length_ciphertext,
+        "sharedSecret", ss, kem->length_shared_secret);
+
+    OQS_MEM_cleanse(ct, kem->length_ciphertext);
+    OQS_MEM_cleanse(ss, kem->length_shared_secret);
+    efree(ct); efree(ss);
+    OQS_KEM_free(kem);
+}
+
+PHP_METHOD(KEM, encapsulateDerand)
+{
+    char *alg = NULL; size_t alg_len = 0;
+    char *public_key = NULL; size_t pk_len = 0;
+    char *seed = NULL; size_t seed_len = 0;
+
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "sss",
+        &alg, &alg_len, &public_key, &pk_len, &seed, &seed_len) == FAILURE) {
+        RETURN_THROWS();
+    }
+
+    OQS_KEM *kem = OQS_KEM_new(alg);
+    if (!kem) {
+        throw_unsupported_algorithm("KEM", alg);
+        RETURN_THROWS();
+    }
+
+    if (pk_len != kem->length_public_key) {
+        OQS_KEM_free(kem);
+        throw_length_mismatch("public key", alg, kem->length_public_key, pk_len);
+        RETURN_THROWS();
+    }
+
+    unsigned char *ct = (unsigned char *) emalloc(kem->length_ciphertext);
+    unsigned char *ss = (unsigned char *) emalloc(kem->length_shared_secret);
+
+    if (OQS_KEM_encaps_derand(kem, ct, ss,
+        (const unsigned char *) public_key, (const unsigned char *) seed) != OQS_SUCCESS) {
+        OQS_MEM_cleanse(ct, kem->length_ciphertext);
+        OQS_MEM_cleanse(ss, kem->length_shared_secret);
+        efree(ct); efree(ss);
+        OQS_KEM_free(kem);
+        throw_failure("Deterministic encapsulation failed");
         RETURN_THROWS();
     }
 
@@ -383,6 +466,107 @@ PHP_METHOD(Signature, verify)
     RETURN_TRUE;
 }
 
+PHP_METHOD(Signature, signWithContext)
+{
+    char *alg = NULL; size_t alg_len = 0;
+    char *message = NULL; size_t message_len = 0;
+    char *ctx_str = NULL; size_t ctx_len = 0;
+    char *secret_key = NULL; size_t secret_len = 0;
+
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "ssss",
+        &alg, &alg_len, &message, &message_len, &ctx_str, &ctx_len,
+        &secret_key, &secret_len) == FAILURE) {
+        RETURN_THROWS();
+    }
+
+    OQS_SIG *sig = OQS_SIG_new(alg);
+    if (!sig) {
+        throw_unsupported_algorithm("Signature", alg);
+        RETURN_THROWS();
+    }
+
+    if (secret_len != sig->length_secret_key) {
+        OQS_SIG_free(sig);
+        throw_length_mismatch("secret key", alg, sig->length_secret_key, secret_len);
+        RETURN_THROWS();
+    }
+
+    size_t allocated_len = sig->length_signature;
+    size_t signature_len = allocated_len;
+    unsigned char *signature = (unsigned char *) emalloc(allocated_len);
+
+    if (OQS_SIG_sign_with_ctx_str(sig, signature, &signature_len,
+            (const unsigned char *) message, message_len,
+            (const unsigned char *) ctx_str, ctx_len,
+            (const unsigned char *) secret_key) != OQS_SUCCESS) {
+        OQS_MEM_cleanse(signature, allocated_len);
+        efree(signature);
+        OQS_SIG_free(sig);
+        throw_failure("Signing with context failed");
+        RETURN_THROWS();
+    }
+
+    RETVAL_STRINGL((const char *) signature, signature_len);
+
+    OQS_MEM_cleanse(signature, allocated_len);
+    efree(signature);
+    OQS_SIG_free(sig);
+}
+
+PHP_METHOD(Signature, verifyWithContext)
+{
+    char *alg = NULL; size_t alg_len = 0;
+    char *message = NULL; size_t message_len = 0;
+    char *signature = NULL; size_t signature_len = 0;
+    char *ctx_str = NULL; size_t ctx_len = 0;
+    char *public_key = NULL; size_t public_len = 0;
+
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "sssss",
+        &alg, &alg_len, &message, &message_len, &signature, &signature_len,
+        &ctx_str, &ctx_len, &public_key, &public_len) == FAILURE) {
+        RETURN_THROWS();
+    }
+
+    OQS_SIG *sig = OQS_SIG_new(alg);
+    if (!sig) {
+        throw_unsupported_algorithm("Signature", alg);
+        RETURN_THROWS();
+    }
+
+    if (public_len != sig->length_public_key) {
+        OQS_SIG_free(sig);
+        throw_length_mismatch("public key", alg, sig->length_public_key, public_len);
+        RETURN_THROWS();
+    }
+
+    if (signature_len > sig->length_signature) {
+        OQS_SIG_free(sig);
+        zend_throw_exception_ex(
+            oqs_exception_ce,
+            0,
+            "Invalid signature length for algorithm %s: maximum %zu bytes, got %zu bytes",
+            alg,
+            sig->length_signature,
+            signature_len
+        );
+        RETURN_THROWS();
+    }
+
+    OQS_STATUS status = OQS_SIG_verify_with_ctx_str(sig,
+        (const unsigned char *) message, message_len,
+        (const unsigned char *) signature, signature_len,
+        (const unsigned char *) ctx_str, ctx_len,
+        (const unsigned char *) public_key);
+
+    OQS_SIG_free(sig);
+
+    if (status != OQS_SUCCESS) {
+        RETURN_FALSE;
+    }
+
+    RETURN_TRUE;
+}
+
 PHP_METHOD(Signature, algorithms)
 {
     if (zend_parse_parameters_none() == FAILURE) {
@@ -400,9 +584,20 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_KEM_keypair, 0, 1, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, algorithm, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_KEM_keypairDerand, 0, 2, IS_ARRAY, 0)
+    ZEND_ARG_TYPE_INFO(0, algorithm, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, seed, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_KEM_encapsulate, 0, 2, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, algorithm, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, publicKey, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_KEM_encapsulateDerand, 0, 3, IS_ARRAY, 0)
+    ZEND_ARG_TYPE_INFO(0, algorithm, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, publicKey, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, seed, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_KEM_decapsulate, 0, 3, IS_STRING, 0)
@@ -431,24 +626,43 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_Signature_verify, 0, 4, _IS_BOOL
     ZEND_ARG_TYPE_INFO(0, publicKey, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_Signature_signWithContext, 0, 4, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, algorithm, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, message, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, context, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, secretKey, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_Signature_verifyWithContext, 0, 5, _IS_BOOL, 0)
+    ZEND_ARG_TYPE_INFO(0, algorithm, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, message, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, signature, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, context, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, publicKey, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_Signature_algorithms, 0, 0, IS_ARRAY, 0)
 ZEND_END_ARG_INFO()
 
 /* ---------- Methods table ---------- */
 
 static const zend_function_entry kem_methods[] = {
-    PHP_ME(KEM, keypair,     arginfo_KEM_keypair,     ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
-    PHP_ME(KEM, encapsulate, arginfo_KEM_encapsulate, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
-    PHP_ME(KEM, decapsulate, arginfo_KEM_decapsulate, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
-    PHP_ME(KEM, algorithms,  arginfo_KEM_algorithms,  ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+    PHP_ME(KEM, keypair,           arginfo_KEM_keypair,           ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+    PHP_ME(KEM, keypairDerand,     arginfo_KEM_keypairDerand,     ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+    PHP_ME(KEM, encapsulate,       arginfo_KEM_encapsulate,       ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+    PHP_ME(KEM, encapsulateDerand, arginfo_KEM_encapsulateDerand, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+    PHP_ME(KEM, decapsulate,       arginfo_KEM_decapsulate,       ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+    PHP_ME(KEM, algorithms,        arginfo_KEM_algorithms,        ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
     PHP_FE_END
 };
 
 static const zend_function_entry signature_methods[] = {
-    PHP_ME(Signature, keypair,     arginfo_Signature_keypair,     ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
-    PHP_ME(Signature, sign,        arginfo_Signature_sign,        ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
-    PHP_ME(Signature, verify,      arginfo_Signature_verify,      ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
-    PHP_ME(Signature, algorithms,  arginfo_Signature_algorithms,  ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+    PHP_ME(Signature, keypair,           arginfo_Signature_keypair,           ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+    PHP_ME(Signature, sign,              arginfo_Signature_sign,              ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+    PHP_ME(Signature, signWithContext,    arginfo_Signature_signWithContext,   ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+    PHP_ME(Signature, verify,            arginfo_Signature_verify,            ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+    PHP_ME(Signature, verifyWithContext,  arginfo_Signature_verifyWithContext, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+    PHP_ME(Signature, algorithms,        arginfo_Signature_algorithms,        ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
     PHP_FE_END
 };
 

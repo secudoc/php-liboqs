@@ -18,8 +18,10 @@ Once PHP natively supports PQC, this wrapper will likely be deprecated.
 `OQS\KEM` exposes post-quantum key encapsulation:
 
 - `OQS\KEM::algorithms(): string[]` — list enabled KEM identifiers.
-- `OQS\KEM::keypair(string $algorithm): array{0: string $publicKey, 1: string $secretKey, publicKey: string, secretKey: string}`
-- `OQS\KEM::encapsulate(string $algorithm, string $publicKey): array{0: string $ciphertext, 1: string $sharedSecret, ciphertext: string, sharedSecret: string}`
+- `OQS\KEM::keypair(string $algorithm): array{publicKey: string, secretKey: string}`
+- `OQS\KEM::keypairDerand(string $algorithm, string $seed): array{publicKey: string, secretKey: string}` — deterministic keygen from seed
+- `OQS\KEM::encapsulate(string $algorithm, string $publicKey): array{ciphertext: string, sharedSecret: string}`
+- `OQS\KEM::encapsulateDerand(string $algorithm, string $publicKey, string $seed): array{ciphertext: string, sharedSecret: string}` — deterministic encaps from seed
 - `OQS\KEM::decapsulate(string $algorithm, string $ciphertext, string $secretKey): string`
 
 All algorithm identifiers surfaced by liboqs are also available as class constants, e.g.
@@ -36,9 +38,11 @@ All algorithm identifiers surfaced by liboqs are also available as class constan
 `OQS\Signature` wraps stateless PQ signatures:
 
 - `OQS\Signature::algorithms(): string[]`
-- `OQS\Signature::keypair(string $algorithm): array{0: string $publicKey, 1: string $secretKey, publicKey: string, secretKey: string}`
+- `OQS\Signature::keypair(string $algorithm): array{publicKey: string, secretKey: string}`
 - `OQS\Signature::sign(string $algorithm, string $message, string $secretKey): string`
+- `OQS\Signature::signWithContext(string $algorithm, string $message, string $context, string $secretKey): string` — context-bound signing
 - `OQS\Signature::verify(string $algorithm, string $message, string $signature, string $publicKey): bool`
+- `OQS\Signature::verifyWithContext(string $algorithm, string $message, string $signature, string $context, string $publicKey): bool` — context-bound verification
 
 Signature identifiers are also class constants, e.g. `OQS\Signature::ALG_DILITHIUM_3`.
 
