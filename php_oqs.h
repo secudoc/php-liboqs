@@ -12,6 +12,6 @@ extern zend_module_entry oqs_module_entry;
 #define phpext_oqs_ptr &oqs_module_entry
 
 #define OQS_EXTENSION_NAME "oqs"
-#define OQS_EXTENSION_VERSION "0.4.0"
+#define OQS_EXTENSION_VERSION "0.4.1"
 
 #endif /* PHP_OQS_H */

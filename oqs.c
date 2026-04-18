@@ -1,9 +1,44 @@
 #include "php_oqs.h"
 #include <ctype.h>
+#include <pthread.h>
 #include <string.h>
 
 #include "Zend/zend_exceptions.h"
 #include "ext/standard/info.h"
+
+/* ---------- Signature derandomization (see Signature::keypairDerand) ----------
+ *
+ * liboqs does not expose OQS_SIG_keypair_derand (as of 0.14.x), so we implement
+ * deterministic signature keygen by temporarily replacing liboqs's randombytes
+ * callback with one that streams bytes out of a caller-supplied seed buffer.
+ * The algorithm internally draws its seed from OQS_randombytes() and then
+ * derives all key material deterministically, so feeding the seed byte-for-byte
+ * reproduces FIPS 204 §5.1 (ML-DSA.KeyGen) with our own ξ.
+ *
+ * Global state, but guarded by derand_rng_mutex so concurrent calls (under ZTS
+ * or from signal handlers) serialize. Non-ZTS PHP is single-threaded per
+ * request, but we lock unconditionally to stay correct in hybrid setups. */
+
+static pthread_mutex_t derand_rng_mutex = PTHREAD_MUTEX_INITIALIZER;
+static const unsigned char *derand_rng_seed = NULL;
+static size_t derand_rng_seed_len = 0;
+static size_t derand_rng_seed_pos = 0;
+static int derand_rng_exhausted = 0;
+
+static void derand_rng_callback(uint8_t *buffer, size_t bytes_to_read)
+{
+    if (derand_rng_seed_pos + bytes_to_read > derand_rng_seed_len) {
+        /* Algorithm requested more randomness than the seed provides. Mark the
+         * operation as exhausted; the wrapper turns this into a PHP exception
+         * after OQS_SIG_keypair returns. Zero the buffer in the meantime so we
+         * do not leak stack contents into the key material. */
+        derand_rng_exhausted = 1;
+        memset(buffer, 0, bytes_to_read);
+        return;
+    }
+    memcpy(buffer, derand_rng_seed + derand_rng_seed_pos, bytes_to_read);
+    derand_rng_seed_pos += bytes_to_read;
+}
 
 /* ---------- Utilities ---------- */
 
@@ -370,6 +405,78 @@ PHP_METHOD(Signature, keypair)
     OQS_SIG_free(sig);
 }
 
+PHP_METHOD(Signature, keypairDerand)
+{
+    char *alg = NULL; size_t alg_len = 0;
+    char *seed = NULL; size_t seed_len = 0;
+
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "ss", &alg, &alg_len, &seed, &seed_len) == FAILURE) {
+        RETURN_THROWS();
+    }
+
+    OQS_SIG *sig = OQS_SIG_new(alg);
+    if (!sig) {
+        throw_unsupported_algorithm("Signature", alg);
+        RETURN_THROWS();
+    }
+
+    unsigned char *pk = (unsigned char *) emalloc(sig->length_public_key);
+    unsigned char *sk = (unsigned char *) emalloc(sig->length_secret_key);
+
+    pthread_mutex_lock(&derand_rng_mutex);
+
+    derand_rng_seed = (const unsigned char *) seed;
+    derand_rng_seed_len = seed_len;
+    derand_rng_seed_pos = 0;
+    derand_rng_exhausted = 0;
+
+    OQS_randombytes_custom_algorithm(derand_rng_callback);
+    OQS_STATUS status = OQS_SIG_keypair(sig, pk, sk);
+    int exhausted = derand_rng_exhausted;
+    size_t consumed = derand_rng_seed_pos;
+
+    /* Restore the default RNG so subsequent liboqs calls (including later
+     * invocations of keypair/encapsulate) use real entropy again. */
+    OQS_randombytes_switch_algorithm("system");
+
+    derand_rng_seed = NULL;
+    derand_rng_seed_len = 0;
+    derand_rng_seed_pos = 0;
+    derand_rng_exhausted = 0;
+
+    pthread_mutex_unlock(&derand_rng_mutex);
+
+    if (status != OQS_SUCCESS || exhausted) {
+        OQS_MEM_cleanse(pk, sig->length_public_key);
+        OQS_MEM_cleanse(sk, sig->length_secret_key);
+        efree(pk); efree(sk);
+        OQS_SIG_free(sig);
+
+        if (exhausted) {
+            zend_throw_exception_ex(
+                oqs_exception_ce,
+                0,
+                "Seed too short for algorithm %s: consumed %zu bytes, only %zu provided",
+                alg,
+                consumed,
+                seed_len
+            );
+        } else {
+            throw_failure("Deterministic signature keypair generation failed");
+        }
+        RETURN_THROWS();
+    }
+
+    add_binary_pair(return_value,
+        "publicKey", pk, sig->length_public_key,
+        "secretKey", sk, sig->length_secret_key);
+
+    OQS_MEM_cleanse(pk, sig->length_public_key);
+    OQS_MEM_cleanse(sk, sig->length_secret_key);
+    efree(pk); efree(sk);
+    OQS_SIG_free(sig);
+}
+
 PHP_METHOD(Signature, sign)
 {
     char *alg = NULL; size_t alg_len = 0;
@@ -613,6 +720,11 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_Signature_keypair, 0, 1, IS_ARRA
     ZEND_ARG_TYPE_INFO(0, algorithm, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_Signature_keypairDerand, 0, 2, IS_ARRAY, 0)
+    ZEND_ARG_TYPE_INFO(0, algorithm, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, seed, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_Signature_sign, 0, 3, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, algorithm, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, message, IS_STRING, 0)
@@ -658,6 +770,7 @@ static const zend_function_entry kem_methods[] = {
 
 static const zend_function_entry signature_methods[] = {
     PHP_ME(Signature, keypair,           arginfo_Signature_keypair,           ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+    PHP_ME(Signature, keypairDerand,     arginfo_Signature_keypairDerand,     ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
     PHP_ME(Signature, sign,              arginfo_Signature_sign,              ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
     PHP_ME(Signature, signWithContext,    arginfo_Signature_signWithContext,   ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
     PHP_ME(Signature, verify,            arginfo_Signature_verify,            ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)

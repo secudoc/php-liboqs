@@ -39,6 +39,7 @@ All algorithm identifiers surfaced by liboqs are also available as class constan
 
 - `OQS\Signature::algorithms(): string[]`
 - `OQS\Signature::keypair(string $algorithm): array{publicKey: string, secretKey: string}`
+- `OQS\Signature::keypairDerand(string $algorithm, string $seed): array{publicKey: string, secretKey: string}` — deterministic keypair from seed (ML-DSA: 32 bytes)
 - `OQS\Signature::sign(string $algorithm, string $message, string $secretKey): string`
 - `OQS\Signature::signWithContext(string $algorithm, string $message, string $context, string $secretKey): string` — context-bound signing
 - `OQS\Signature::verify(string $algorithm, string $message, string $signature, string $publicKey): bool`

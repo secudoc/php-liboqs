@@ -1,6 +1,25 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## [0.4.1] - 2026-04-18
+
+### Added
+- **`Signature::keypairDerand(string $algorithm, string $seed)`** — deterministic signature keypair generation from a caller-supplied seed.
+
+### Why
+Enables spec-conformant composite signature schemes (e.g. IETF draft-ietf-lamps-pq-composite-sigs-18 `id-MLDSA65-Ed25519-SHA512`) which store the 32-byte FIPS 204 ML-DSA seed `ξ` rather than the 4032-byte expanded secret key. Also makes NIST KAT verification possible directly from PHP.
+
+### How
+liboqs does not expose `OQS_SIG_keypair_derand` (as of 0.14.x). The extension
+substitutes liboqs's `OQS_randombytes` callback with a seed-sourced one for
+the duration of `OQS_SIG_keypair`, then restores the system RNG. For ML-DSA the
+algorithm draws exactly its seed length from `randombytes` and derives all key
+material deterministically, so this faithfully reproduces FIPS 204 §5.1 (ML-DSA.KeyGen).
+
+Thread-safety: the swap is guarded by a pthread mutex. Required seed length is
+algorithm-specific (ML-DSA: 32 bytes); an under-sized seed throws `OQS\Exception`.
+
 ## [0.4.0] - 2026-04-10
 
 ### Added
